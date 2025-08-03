@@ -21,12 +21,12 @@ This project consists of two main components:
    - Add your API key: `GOOGLE_API_KEY=your_api_key_here`
    - Or set it as an environment variable: `export GOOGLE_API_KEY=your_api_key_here`
 3. **Create a python virtual environment and activate (optional)**:
-   ```
+   ```bash
    python3 -m venv .venv
    source .venv/bin/activate 
    ```
 4. **Install required Python packages**:
-   ```
+   ```bash
    pip install -r requirements.txt
    ```
 
