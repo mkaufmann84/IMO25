@@ -12,10 +12,6 @@ This project consists of two main components:
 
 1. **Python 3.7+** installed on your system
 2. **Google Gemini API key** - Get one from [Google AI Studio](https://aistudio.google.com/app/apikey)
-3. **Required Python packages**:
-   ```bash
-   pip install requests
-   ```
 
 ## Setup
 
@@ -24,6 +20,15 @@ This project consists of two main components:
    - Create a `.env` file in the project directory
    - Add your API key: `GOOGLE_API_KEY=your_api_key_here`
    - Or set it as an environment variable: `export GOOGLE_API_KEY=your_api_key_here`
+3. **Create a python virtual environment and activate (optional)**:
+   ```
+   python3 -m venv .venv
+   source .venv/bin/activate 
+   ```
+4. **Install required Python packages**:
+   ```
+   pip install -r requirements.txt
+   ```
 
 ## Usage
 
