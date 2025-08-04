@@ -1,5 +1,9 @@
 # IMO 2025 Problem Solver
 
+> **Note:** This repository is a **fork** of the original [IMO 2025 Problem Solver](https://github.com/lyang36/IMO25) by Lin Yang and Yichen Huang.  
+> I am forking this repository for the purpose of **reproducing the results** reported in their work.  
+> All credit for the original code and methodology goes to the original authors.
+
 A parallel AI agent system for solving International Mathematical Olympiad (IMO) problems using Google's Gemini API.
 
 ## Overview
