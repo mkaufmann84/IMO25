@@ -39,8 +39,8 @@ load_dotenv()
 
 # --- CONFIGURATION ---
 # 从环境变量中获取配置
-MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.5-pro")
-API_URL = os.getenv("API_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-5")
+API_URL = os.getenv("API_URL", "https://api.openai.com/v1/")
 
 # Global variables for logging
 _log_file = None
@@ -256,7 +256,7 @@ def send_api_request(api_key, messages):
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.1,
+            #temperature=0.1,
             top_p=1.0,
             extra_body=extra_args
         )
