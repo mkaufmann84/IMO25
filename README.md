@@ -27,9 +27,10 @@ SOFTWARE.
 
 ## Overview
 
-This project consists of two main components:
-- `agent.py`: A single AI agent that attempts to solve IMO problems
-- `run_parallel.py`: A parallel execution system that runs multiple agents simultaneously
+This project consists of the following components:
+- `code/agent.py`: A single AI agent that attempts to solve IMO problems
+- `code/run_parallel.py`: A parallel execution system that runs multiple agents simultaneously
+- `code/res2md.py`: A small utility to parse a result file that contains JSON (e.g., JSONL) and print the last JSON object
 
 ## Prerequisites
 
@@ -70,16 +71,16 @@ python agent.py problem.txt [options]
 python agent.py imo2025_p1.txt --log agent_output.log
 ```
 
-### Parallel Execution (`run_parallel.py`)
+### Parallel Execution (`code/run_parallel.py`)
 
 Run multiple agents in parallel to increase the chance of finding a solution:
 
 ```bash
-python run_parallel.py problem.txt [options]
+python IMO25/code/run_parallel.py <problem_file> [options]
 ```
 
 **Arguments:**
-- `problem.txt`: Path to the problem statement file (required)
+- `problem.txt`: Path to the problem statement file (required). Use an absolute path or ensure the path is valid from within `IMO25/code/` (the script runs the agent with its working directory set to `IMO25/code/`).
 
 **Options:**
 - `--num-agents N` or `-n N`: Number of parallel agents (default: 10)
@@ -87,17 +88,32 @@ python run_parallel.py problem.txt [options]
 - `--timeout SECONDS` or `-t SECONDS`: Timeout per agent in seconds (default: no timeout)
 - `--max-workers N` or `-w N`: Maximum worker processes (default: number of agents)
 - `--other_prompts PROMPTS` or `-o PROMPTS`: Additional prompts separated by commas
+- `--agent-file PATH` or `-a PATH`: Path to the agent file to run (default: `agent.py` inside `IMO25/code/`)
+- `--exit-immediately` or `-e`: Exit the whole run as soon as any agent finds a correct solution (otherwise, all agents run to completion)
 
 **Examples:**
 ```bash
 # Run 20 agents with 5-minute timeout each
-python run_parallel.py imo2025_p1.txt -n 20 -t 300
+python IMO25/code/run_parallel.py problems/imo2025_p1.txt -n 20 -t 300
 
-# Run 5 agents with custom log directory
-python run_parallel.py imo2025_p1.txt -n 5 -d my_logs
+# Run 5 agents with custom log directory and exit immediately on first success
+python IMO25/code/run_parallel.py problems/imo2025_p1.txt -n 5 -d logs/p1_run -e
 
-# Run with additional prompts
-python run_parallel.py imo2025_p1.txt -n 15 -o "focus_on_geometry,use_induction"
+# Run with additional prompts and a custom agent file
+python IMO25/code/run_parallel.py problems/imo2025_p1.txt -n 15 -o "focus_on_geometry,use_induction" -a agent.py
+```
+
+### Result extractor (`code/res2md.py`)
+
+Parse a result file that contains JSON (for example, a `.jsonl` file where each line is a JSON object), and print the last JSON object in the file. Useful for quickly extracting the final structured result produced by some runs.
+
+```bash
+python IMO25/code/res2md.py <result_file>
+```
+
+**Example:**
+```bash
+python IMO25/code/res2md.py logs/results.jsonl
 ```
 
 ## Problem File Format

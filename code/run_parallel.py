@@ -35,7 +35,37 @@ import threading
 import json
 import re
 
-def run_agent(agent_id, problem_file, log_dir, timeout=None, other_prompts=[]):
+# Globals used within worker processes to forward termination to child agent
+current_child_process = None
+_signal_handlers_installed = False
+
+def _install_worker_signal_handlers():
+    """Install SIGTERM/SIGINT handlers in worker to terminate spawned agent."""
+    global _signal_handlers_installed
+    if _signal_handlers_installed:
+        return
+
+    def _forward_signal(signum, frame):
+        # Kill the entire child process group if available, then exit fast
+        try:
+            if current_child_process is not None and current_child_process.poll() is None:
+                try:
+                    pgid = os.getpgid(current_child_process.pid)
+                    os.killpg(pgid, signum)
+                except Exception:
+                    try:
+                        current_child_process.terminate()
+                    except Exception:
+                        pass
+        finally:
+            # Avoid executor cleanup delays inside workers
+            os._exit(0)
+
+    signal.signal(signal.SIGTERM, _forward_signal)
+    signal.signal(signal.SIGINT, _forward_signal)
+    _signal_handlers_installed = True
+
+def run_agent(agent_id, problem_file, log_dir, timeout=None, other_prompts=[], agent_file='agent.py'):
     """
     Run a single agent instance with the specified parameters.
     
@@ -44,6 +74,8 @@ def run_agent(agent_id, problem_file, log_dir, timeout=None, other_prompts=[]):
         problem_file: Path to the problem statement file
         log_dir: Directory to store log files
         timeout: Timeout in seconds (None for no timeout)
+        other_prompts: List of additional prompts to use
+        agent_file: Path to the agent file to execute (default: agent.py)
     
     Returns:
         tuple: (agent_id, return_code, stdout, stderr, solution_found)
@@ -51,49 +83,60 @@ def run_agent(agent_id, problem_file, log_dir, timeout=None, other_prompts=[]):
     log_file = os.path.join(log_dir, f"agent_{agent_id:02d}.log")
     
     cmd = [
-        sys.executable, "agent.py", 
+        sys.executable, agent_file, 
         problem_file,
         "--log", log_file,
         "--other_prompts", f'\"{",".join(other_prompts)}\"'
     ]
     
     try:
-        # Run the agent with timeout
-        if timeout:
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
-                timeout=timeout,
-                cwd=os.path.dirname(os.path.abspath(__file__))
-            )
-        else:
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True,
-                cwd=os.path.dirname(os.path.abspath(__file__))
-            )
-        
+        # Ensure worker can forward signals to child agent process
+        _install_worker_signal_handlers()
+
+        # Launch agent as its own process group so we can kill the whole tree
+        global current_child_process
+        current_child_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            start_new_session=True,
+        )
+
+        try:
+            if timeout:
+                stdout_text, stderr_text = current_child_process.communicate(timeout=timeout)
+            else:
+                stdout_text, stderr_text = current_child_process.communicate()
+        except subprocess.TimeoutExpired:
+            # Kill process group on timeout
+            try:
+                os.killpg(os.getpgid(current_child_process.pid), signal.SIGKILL)
+            except Exception:
+                try:
+                    current_child_process.kill()
+                except Exception:
+                    pass
+            return (agent_id, -1, "", f"Agent {agent_id} timed out after {timeout} seconds", False)
+        finally:
+            return_code = current_child_process.returncode
+            current_child_process = None
+
         # Check if a solution was found by looking for the success message
         solution_found = False
-        if result.returncode == 0:
-            # Look for the success message in stdout
-            if "Found a correct solution in run" in result.stdout:
+        if return_code == 0:
+            if "Found a correct solution in run" in stdout_text:
                 solution_found = True
-            # Also check the log file for the success message
             try:
                 with open(log_file, 'r', encoding='utf-8') as f:
                     log_content = f.read()
                     if "Found a correct solution in run" in log_content:
                         solution_found = True
-            except:
+            except Exception:
                 pass
-        
-        return (agent_id, result.returncode, result.stdout, result.stderr, solution_found)
-    
-    except subprocess.TimeoutExpired:
-        return (agent_id, -1, "", f"Agent {agent_id} timed out after {timeout} seconds", False)
+
+        return (agent_id, return_code, stdout_text, stderr_text, solution_found)
     except Exception as e:
         return (agent_id, -1, "", f"Agent {agent_id} failed with error: {str(e)}", False)
 
@@ -117,6 +160,11 @@ def main():
     parser.add_argument('--max-workers', '-w', type=int, default=None,
                        help='Maximum number of worker processes (default: number of agents)')
     parser.add_argument('--other_prompts', '-o', type=str, help='Other prompts (optional)')
+    parser.add_argument('--agent-file', '-a', type=str, default='agent.py', 
+                       help='Path to the agent file to run (default: agent.py)')
+    parser.add_argument('--exit-immediately', '-e', action='store_true',
+                       help='Exit immediately when solution is found (default: graceful shutdown)')
+    
     
     args = parser.parse_args()
     
@@ -125,11 +173,14 @@ def main():
     
     print(f"Starting {args.num_agents} parallel agents...")
     print(f"Problem file: {args.problem_file}")
+    print(f"Agent file: {args.agent_file}")
     print(f"Log directory: {args.log_dir}")
+    print(f"Exit behavior: {'Immediate exit' if args.exit_immediately else 'Run all agents to completion'} when solution found")
     if args.timeout:
         print(f"Timeout per agent: {args.timeout} seconds")
     print(f"Max workers: {args.max_workers or args.num_agents}")
-    print("Note: All agents will run to completion regardless of solution found")
+    if not args.exit_immediately:
+        print("Note: All agents will run to completion regardless of solution found")
     print("-" * 50)
     
     # Track results
@@ -149,7 +200,7 @@ def main():
         with ProcessPoolExecutor(max_workers=args.max_workers or args.num_agents) as executor:
             # Submit all agent tasks
             future_to_agent = {
-                executor.submit(run_agent, i, args.problem_file, args.log_dir, args.timeout, other_prompts): i 
+                executor.submit(run_agent, i, args.problem_file, args.log_dir, args.timeout, other_prompts, args.agent_file): i 
                 for i in range(args.num_agents)
             }
             
@@ -166,6 +217,53 @@ def main():
                     print(f"\n🎉 SOLUTION FOUND by Agent {agent_id:02d}! 🎉")
                     print(f"[Agent {agent_id:02d}] {status}")
                     print_status(agent_id, status, stdout, stderr)
+                    
+                    if args.exit_immediately:
+                        # Exit immediately when solution is found
+                        print(f"\nExiting immediately as requested...")
+                        # Cancel pending tasks and stop scheduling new ones
+                        try:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                        except Exception:
+                            pass
+                        # Print a concise early-exit summary with the winning agent
+                        try:
+                            elapsed = time.time() - start_time
+                            print("\n" + "=" * 50)
+                            print("EARLY EXIT SUMMARY")
+                            print("=" * 50)
+                            print(f"Correct solution found by Agent {agent_id:02d}")
+                            print(f"Log file: {os.path.join(args.log_dir, f'agent_{agent_id:02d}.log')}")
+                            print(f"Elapsed time: {elapsed:.2f} seconds")
+                        except Exception:
+                            pass
+                        # Terminate all worker processes so they forward termination to their child agents
+                        try:
+                            worker_processes = list(getattr(executor, "_processes", {}).values())
+                            for p in worker_processes:
+                                try:
+                                    p.terminate()
+                                except Exception:
+                                    try:
+                                        os.kill(p.pid, signal.SIGTERM)
+                                    except Exception:
+                                        pass
+                            # Brief grace period, then force kill remaining
+                            time.sleep(0.5)
+                            for p in worker_processes:
+                                try:
+                                    if hasattr(p, "is_alive") and p.is_alive():
+                                        p.kill()
+                                except Exception:
+                                    try:
+                                        os.kill(p.pid, signal.SIGKILL)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                        # Exit the main process immediately without waiting for context cleanup
+                        os._exit(0)
+                    # Otherwise, continue running all agents to completion
                 elif return_code == 0:
                     status = "COMPLETED SUCCESSFULLY (no solution found)"
                     successful_agents.append(agent_id)
