@@ -32,11 +32,9 @@ import argparse
 import logging
 
 # --- CONFIGURATION ---
-# The model to use. "gemini-1.5-flash" is fast and capable.
-#MODEL_NAME = "gemini-1.5-flash-latest" 
-MODEL_NAME = "gemini-2.5-pro" 
+MODEL_NAME = "grok-4-0709" 
 # Use the Generative Language API endpoint, which is simpler for API key auth
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+API_URL = f"https://api.x.ai/v1/chat/completions"
 
 # Global variables for logging
 _log_file = None
@@ -237,10 +235,10 @@ def get_api_key():
     Exits if the key is not found.
     """
 
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("XAI_API_KEY")
     if not api_key:
-        print("Error: GOOGLE_API_KEY environment variable not set.")
-        print("Please set the variable, e.g., 'export GOOGLE_API_KEY=\"your_api_key\"'")
+        print("Error: XAI_API_KEY environment variable not set.")
+        print("Please set the variable, e.g., 'export XAI_API_KEY=\"your_api_key\"'")
         sys.exit(1)
     return api_key
 
@@ -265,32 +263,25 @@ def build_request_payload(system_prompt, question_prompt, other_prompts=None):
     recommended multi-turn format to include a system prompt.
     """
     payload = {
-        "systemInstruction": {
-            "role": "system",
-            "parts": [
+        "messages": [
             {
-                "text": system_prompt 
+                "role": "system",
+                "content":  system_prompt 
+            },
+            {
+            "role": "user",
+            "content": question_prompt
             }
-            ]
-        },
-       "contents": [
-        {
-          "role": "user",
-          "parts": [{"text": question_prompt}]
-        }
-      ],
-      "generationConfig": {
+        ],
+        "model": MODEL_NAME,
         "temperature": 0.1,
-        "topP": 1.0,
-        "thinkingConfig": { "thinkingBudget": 32768} 
-      },
     }
 
     if other_prompts:
         for prompt in other_prompts:
-            payload["contents"].append({
+            payload["messages"].append({
                 "role": "user",
-                "parts": [{"text": prompt}]
+                "content": prompt
             })
 
     return payload
@@ -301,29 +292,29 @@ def send_api_request(api_key, payload):
     """
     headers = {
         "Content-Type": "application/json",
-        "X-goog-api-key": api_key # API key now in header!
+        "Authorization": f"Bearer {api_key}"
     }
     
-    #print("Sending request to Gemini API...")
     try:
-        response = requests.post(API_URL, headers=headers, data=json.dumps(payload))
+        response = requests.post(API_URL, headers=headers, data=json.dumps(payload), timeout=3600)
         response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
+        print(">>>>>>> Response:")
+        print(json.dumps(response.json(), indent=4))
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error during API request: {e}")
         if response.status_code == 400:
             print(f"Possible reason for 400: Model '{MODEL_NAME}' might not be available or URL is incorrect for your setup.")
             print(f"Raw API Response (if available): {response.text}")
-        #sys.exit(1)
-        raise e
 
+        raise e
 def extract_text_from_response(response_data):
     """
-    Extracts the generated text from the API response JSON.
+    Extracts the generated tex##t from the API response JSON.
     Handles potential errors if the response format is unexpected.
     """
     try:
-        return response_data['candidates'][0]['content']['parts'][0]['text']
+        return response_data['choices'][0]['message']['content']
     except (KeyError, IndexError, TypeError) as e:
         print("Error: Could not extract text from the API response.")
         print(f"Reason: {e}")
@@ -331,6 +322,21 @@ def extract_text_from_response(response_data):
         print(json.dumps(response_data, indent=2))
         #sys.exit(1)
         raise e 
+
+def extract_solution(response_data):
+    """
+    Extracts the solution from the API response JSON.
+    """
+    # find the last "### Summary ###" and return the text after it
+    summary_idx = response_data.rfind("Summary")
+    if summary_idx == -1:
+        return ""
+    
+    # check if there "###" before the summary, if so, return the text with the "###"
+    if "### " in response_data[summary_idx - 4:summary_idx]:
+        return response_data[summary_idx - 4:].strip()
+    else:
+        return response_data[summary_idx:].strip()
 
 def extract_detailed_solution(solution, marker='Detailed Solution', after=True):
     """
@@ -348,7 +354,7 @@ def extract_detailed_solution(solution, marker='Detailed Solution', after=True):
 
 def verify_solution(problem_statement, solution, verbose=True):
 
-    dsol = extract_detailed_solution(solution)
+    dsol = extract_detailed_solution(extract_solution(solution))
 
     newst = f"""
 ======================================================================
@@ -380,7 +386,7 @@ def verify_solution(problem_statement, solution, verbose=True):
         print(">>>>>>> Verification results:")
         print(json.dumps(out, indent=4))
 
-    check_correctness = """Response in "yes" or "no". Is the following statement saying the solution is correct, or does not contain critical error or a major justification gap?""" \
+    check_correctness = """Response in "yes" or "no". Is the following statement saying the solution is complete, correct, and does not contain critical error or a major justification gap?""" \
             + "\n\n" + out 
     prompt = build_request_payload(system_prompt="", question_prompt=check_correctness)
     r = send_api_request(get_api_key(), prompt)
@@ -393,26 +399,8 @@ def verify_solution(problem_statement, solution, verbose=True):
     bug_report = ""
 
     if("yes" not in o.lower()):
-        bug_report = extract_detailed_solution(out, "Detailed Verification", False)
+        bug_report = extract_detailed_solution(extract_solution(out), "Detailed Verification", False)
 
-        """p2["contents"].append(
-            {"role": "model",
-            "parts": [{"text": bug_report}]
-            }
-        )
-        p2["contents"].append(
-            {"role": "user",
-            "parts": [{"text": check_verification_prompt}]
-            }
-        )
-
-        if(verbose):
-            print(">>>>>>> Review bug report prompt:")
-            print(json.dumps(p2["contents"][-2:], indent=4))
-
-        res = send_api_request(get_api_key(), p2)
-        out = extract_text_from_response(res) 
-    """
 
     if(verbose):
         print(">>>>>>>Bug report:")
@@ -459,19 +447,19 @@ def init_explorations(problem_statement, verbose=True, other_prompts=[]):
     print(json.dumps(output1, indent=4))
 
     print(f">>>>>>> Self improvement start:")
-    p1["contents"].append(
-        {"role": "model",
-        "parts": [{"text": output1}]
+    p1["messages"].append(
+        {"role": "assistant",
+        "content": output1
         }
     )
-    p1["contents"].append(
+    p1["messages"].append(
         {"role": "user",
-        "parts": [{"text": self_improvement_prompt}]
+        "content": self_improvement_prompt
         }
     )
 
     response2 = send_api_request(get_api_key(), p1)
-    solution = extract_text_from_response(response2)
+    solution = extract_solution(extract_text_from_response(response2))
     print(f">>>>>>> Corrected solution: ")
     print(json.dumps(solution, indent=4))
     
@@ -525,76 +513,74 @@ def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_mem
     correct_count = 1
     success = False
     for i in range(current_iteration, 30):
-        print(f"Number of iterations: {i}, number of corrects: {correct_count}, number of errors: {error_count}")
+        try:
+            print(f"Number of iterations: {i}, number of corrects: {correct_count}, number of errors: {error_count}")
 
-        if("yes" not in good_verify.lower()):
-            # clear
-            correct_count = 0
-            error_count += 1
+            if("yes" not in good_verify.lower()):
+                # clear
+                correct_count = 0
+                error_count += 1
 
-            #self improvement
-            print(">>>>>>> Verification does not pass, correcting ...")
-            # establish a new prompt that contains the solution and the verification
+                #self improvement
+                print(">>>>>>> Verification does not pass, correcting ...")
+                # establish a new prompt that contains the solution and the verification
 
-            p1 = build_request_payload(
-                system_prompt=step1_prompt,
-                question_prompt=problem_statement,
-                #other_prompts=["You may use analytic geometry to solve the problem."]
-                other_prompts=other_prompts
-            )
+                p1 = build_request_payload(
+                    system_prompt=step1_prompt,
+                    question_prompt=problem_statement,
+                    #other_prompts=["You may use analytic geometry to solve the problem."]
+                    other_prompts=other_prompts
+                )
 
-            p1["contents"].append(
-                {"role": "model",
-                "parts": [{"text": solution}]
-                }
-            )
-            
-            p1["contents"].append(
-                {"role": "user",
-                "parts": [{"text": correction_prompt},
-                          {"text": verify}]
-                }
-            )
+                p1["messages"].append(
+                    {"role": "assistant",
+                    "content": solution
+                    }
+                )
+                
+                p1["messages"].append(
+                    {"role": "user",
+                    "content": correction_prompt + "\n\n" + verify
+                    }
+                )
 
-            print(">>>>>>> New prompt:")
-            print(json.dumps(p1, indent=4))
-            response2 = send_api_request(get_api_key(), p1)
-            solution = extract_text_from_response(response2)
+                print(">>>>>>> New prompt:")
+                print(json.dumps(p1, indent=4))
+                response2 = send_api_request(get_api_key(), p1)
+                solution = extract_solution(extract_text_from_response(response2))
 
-            print(">>>>>>> Corrected solution:")
-            print(json.dumps(solution, indent=4))
+                print(">>>>>>> Corrected solution:")
+                print(json.dumps(solution, indent=4))
 
 
-            #print(f">>>>>>> Check if solution is complete:"  )
-            #is_complete = check_if_solution_claimed_complete(solution)
-            #if not is_complete:
-            #    print(f">>>>>>> Solution is not complete. Failed.")
-            #    return None
+            print(f">>>>>>> Verify the solution.")
+            verify, good_verify = verify_solution(problem_statement, solution)
 
-        print(f">>>>>>> Verify the solution.")
-        verify, good_verify = verify_solution(problem_statement, solution)
+            if("yes" in good_verify.lower()):
+                print(">>>>>>> Solution is good, verifying again ...")
+                correct_count += 1
+                error_count = 0
+    
 
-        if("yes" in good_verify.lower()):
-            print(">>>>>>> Solution is good, verifying again ...")
-            correct_count += 1
-            error_count = 0
- 
-
-        # Save memory every iteration
-        if memory_file:
-            save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify)
-        
-        if(correct_count >= 5):
-            print(">>>>>>> Correct solution found.")
-            print(json.dumps(solution, indent=4))
-            return solution
-
-        elif(error_count >= 10):
-            print(">>>>>>> Failed in finding a correct solution.")
-            # Save final state before returning
+            # Save memory every iteration
             if memory_file:
                 save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify)
-            return None
+            
+            if(correct_count >= 5):
+                print(">>>>>>> Correct solution found.")
+                print(json.dumps(solution, indent=4))
+                return solution
+
+            elif(error_count >= 10):
+                print(">>>>>>> Failed in finding a correct solution.")
+                # Save final state before returning
+                if memory_file:
+                    save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify)
+                return None
+        
+        except Exception as e:
+            print(f">>>>>>> Error in run {i}: {e}")
+            continue
 
     if(not success):
         print(">>>>>>> Failed in finding a correct solution.")

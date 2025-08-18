@@ -1,5 +1,5 @@
 # IMO 2025 Problem Solver
-A parallel AI agent system for solving International Mathematical Olympiad (IMO) problems using Google's Gemini API.
+A parallel AI agent system for solving International Mathematical Olympiad (IMO) problems using Google's Gemini, OpenAI, and XAI APIs.
 
 ```
 MIT License
@@ -29,13 +29,18 @@ SOFTWARE.
 
 This project consists of the following components:
 - `code/agent.py`: A single AI agent that attempts to solve IMO problems
+- `code/agent_oai.py`: A single AI agent that uses OpenAI models (same CLI/usage as `agent.py`)
+- `code/agent_xai.py`: A single AI agent that uses XAI models (same CLI/usage as `agent.py`)
 - `code/run_parallel.py`: A parallel execution system that runs multiple agents simultaneously
 - `code/res2md.py`: A small utility to parse a result file that contains JSON (e.g., JSONL) and print the last JSON object
 
 ## Prerequisites
 
 1. **Python 3.7+** installed on your system
-2. **Google Gemini API key** - Get one from [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. **API key(s) for your chosen provider(s)**:
+   - Google Gemini: https://aistudio.google.com/app/apikey
+   - OpenAI: https://platform.openai.com/api-keys
+   - XAI: Refer to your XAI account portal for API key issuance
 3. **Required Python packages**:
    ```bash
    pip install requests
@@ -44,16 +49,17 @@ This project consists of the following components:
 ## Setup
 
 1. **Clone or download the project files**
-2. **Set up your API key**:
-   - Create a `.env` file in the project directory
-   - Add your API key: `GOOGLE_API_KEY=your_api_key_here`
-   - Or set it as an environment variable: `export GOOGLE_API_KEY=your_api_key_here`
+2. **Set up your API key(s)**:
+   - Set environment variables in your shell for the providers you plan to use, for example:
+     - `export GOOGLE_API_KEY=your_google_api_key`
+     - `export OPENAI_API_KEY=your_openai_api_key`
+     - `export XAI_API_KEY=your_xai_api_key`
 
 ## Usage
 
-### Single Agent (`agent.py`)
+### Single Agent (`agent.py`, `agent_oai.py`, `agent_xai.py`)
 
-Run a single agent to solve an IMO problem:
+Run a single agent to solve an IMO problem (usage and flags are the same for all three agents):
 
 ```bash
 python agent.py problem.txt [options]
@@ -69,6 +75,13 @@ python agent.py problem.txt [options]
 **Example:**
 ```bash
 python agent.py imo2025_p1.txt --log agent_output.log
+```
+
+To run with OpenAI or XAI instead, simply invoke the corresponding script with the same options:
+
+```bash
+python agent_oai.py imo2025_p1.txt --log agent_output_oai.log
+python agent_xai.py imo2025_p1.txt --log agent_output_xai.log
 ```
 
 ### Parallel Execution (`code/run_parallel.py`)
@@ -101,6 +114,10 @@ python IMO25/code/run_parallel.py problems/imo2025_p1.txt -n 5 -d logs/p1_run -e
 
 # Run with additional prompts and a custom agent file
 python IMO25/code/run_parallel.py problems/imo2025_p1.txt -n 15 -o "focus_on_geometry,use_induction" -a agent.py
+
+# Run OpenAI/XAI variants by pointing to the agent file
+python IMO25/code/run_parallel.py problems/imo2025_p1.txt -n 10 -a agent_oai.py
+python IMO25/code/run_parallel.py problems/imo2025_p1.txt -n 10 -a agent_xai.py
 ```
 
 ### Result extractor (`code/res2md.py`)
@@ -135,6 +152,7 @@ See the `problems` folder.
   - Success rate
   - Which agent found a solution (if any)
   - Location of log files
+- Each log entry includes a timestamp
 
 ## Understanding the Output
 
@@ -142,7 +160,7 @@ See the `problems` folder.
 The system looks for the phrase "Found a correct solution in run" to identify successful solutions.
 
 ### Agent Behavior
-- Agents use Google's Gemini 2.5 Pro model
+- Agents can use Google's Gemini 2.5 Pro, OpenAI, or XAI models depending on the chosen script
 - Each agent follows a structured approach with multiple attempts
 - Solutions are verified for completeness and correctness
 - Agents can provide partial solutions if complete solutions aren't found
@@ -152,20 +170,26 @@ The system looks for the phrase "Found a correct solution in run" to identify su
 1. **Problem Formatting**: Ensure your problem file is clear and well-formatted
 2. **Parallel Execution**: Use more agents for harder problems (10-20 agents recommended)
 3. **Timeout Settings**: Set reasonable timeouts (you may set no timeout)
-4. **API Limits**: Be aware of Google API rate limits and costs
+4. **API Limits**: Be aware of Google/OpenAI/XAI API rate limits and costs
 5. **Log Analysis**: Check individual agent logs for detailed reasoning
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **API Key Error**: Ensure your Google API key is properly set
+1. **API Key Error**: Ensure the relevant API key(s) are properly set (Google/OpenAI/XAI)
 2. **Timeout Issues**: Increase timeout or reduce number of agents
 3. **Memory Issues**: Reduce max-workers if running out of memory
 4. **No Solutions Found**: Try running more agents or check problem clarity
 
 ### Debug Mode
 Add verbose logging by modifying the agent code or check individual log files for detailed output.
+
+## Changelog
+
+- Added `code/agent_oai.py` and `code/agent_xai.py` (usage identical to `agent.py`).
+- Logs now record timestamps.
+- Parallel runs no longer exit by default when a solution is found; use `--exit-immediately` to stop at the first complete solution.
 
 ## License
 

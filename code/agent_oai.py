@@ -32,11 +32,10 @@ import argparse
 import logging
 
 # --- CONFIGURATION ---
-# The model to use. "gemini-1.5-flash" is fast and capable.
-#MODEL_NAME = "gemini-1.5-flash-latest" 
-MODEL_NAME = "gemini-2.5-pro" 
-# Use the Generative Language API endpoint, which is simpler for API key auth
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+# The model to use. "gpt-4o" is fast and capable.
+MODEL_NAME = "gpt-5"
+# Use OpenAI API endpoint for o3 model
+API_URL = "https://api.openai.com/v1/responses"
 
 # Global variables for logging
 _log_file = None
@@ -84,42 +83,6 @@ def close_log_file():
     if _log_file is not None:
         _log_file.close()
         _log_file = None
-
-def save_memory(memory_file, problem_statement, other_prompts, current_iteration, max_runs, solution=None, verify=None):
-    """
-    Save the current state to a memory file.
-    """
-    memory = {
-        "problem_statement": problem_statement,
-        "other_prompts": other_prompts,
-        "current_iteration": current_iteration,
-        "max_runs": max_runs,
-        "solution": solution,
-        "verify": verify,
-        "timestamp": __import__('datetime').datetime.now().isoformat()
-    }
-    
-    try:
-        with open(memory_file, 'w', encoding='utf-8') as f:
-            json.dump(memory, f, indent=2, ensure_ascii=False)
-        print(f"Memory saved to {memory_file}")
-        return True
-    except Exception as e:
-        print(f"Error saving memory to {memory_file}: {e}")
-        return False
-
-def load_memory(memory_file):
-    """
-    Load the state from a memory file.
-    """
-    try:
-        with open(memory_file, 'r', encoding='utf-8') as f:
-            memory = json.load(f)
-        print(f"Memory loaded from {memory_file}")
-        return memory
-    except Exception as e:
-        print(f"Error loading memory from {memory_file}: {e}")
-        return None
 
 step1_prompt = """
 ### Core Instructions ###
@@ -233,14 +196,14 @@ Your task is to act as an IMO grader. Now, generate the **summary** and the **st
 
 def get_api_key():
     """
-    Retrieves the Google API key from environment variables.
+    Retrieves the OpenAI API key from environment variables.
     Exits if the key is not found.
     """
 
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        print("Error: GOOGLE_API_KEY environment variable not set.")
-        print("Please set the variable, e.g., 'export GOOGLE_API_KEY=\"your_api_key\"'")
+        print("Error: OPENAI_API_KEY environment variable not set.")
+        print("Please set the variable, e.g., 'export OPENAI_API_KEY=\"your_api_key\"'")
         sys.exit(1)
     return api_key
 
@@ -261,52 +224,40 @@ def read_file_content(filepath):
 
 def build_request_payload(system_prompt, question_prompt, other_prompts=None):
     """
-    Builds the JSON payload for the Gemini API request, using the
-    recommended multi-turn format to include a system prompt.
+    Builds the JSON payload for the OpenAI o3 API request.
     """
-    payload = {
-        "systemInstruction": {
-            "role": "system",
-            "parts": [
-            {
-                "text": system_prompt 
-            }
-            ]
-        },
-       "contents": [
-        {
-          "role": "user",
-          "parts": [{"text": question_prompt}]
-        }
-      ],
-      "generationConfig": {
-        "temperature": 0.1,
-        "topP": 1.0,
-        "thinkingConfig": { "thinkingBudget": 32768} 
-      },
-    }
-
+    # Combine all prompts into a single input
+    input_text = question_prompt
+    
+    if system_prompt:
+        input_text = f"System: {system_prompt}\n\nUser: {question_prompt}"
+    
     if other_prompts:
         for prompt in other_prompts:
-            payload["contents"].append({
-                "role": "user",
-                "parts": [{"text": prompt}]
-            })
+            input_text += f"\n\nAdditional instruction: {prompt}"
+    
+    payload = {
+        "model": MODEL_NAME,
+        "input": input_text,
+        "reasoning": {
+            "effort": "high"
+        }
+    }
 
     return payload
 
 def send_api_request(api_key, payload):
     """
-    Sends the request to the Gemini API and returns the response.
+    Sends the request to the OpenAI API and returns the response.
     """
     headers = {
         "Content-Type": "application/json",
-        "X-goog-api-key": api_key # API key now in header!
+        "Authorization": f"Bearer {api_key}"
     }
     
-    #print("Sending request to Gemini API...")
+    #print("Sending request to OpenAI API...")
     try:
-        response = requests.post(API_URL, headers=headers, data=json.dumps(payload))
+        response = requests.post(API_URL, headers=headers, data=json.dumps(payload), timeout=7200)
         response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -314,16 +265,28 @@ def send_api_request(api_key, payload):
         if response.status_code == 400:
             print(f"Possible reason for 400: Model '{MODEL_NAME}' might not be available or URL is incorrect for your setup.")
             print(f"Raw API Response (if available): {response.text}")
-        #sys.exit(1)
         raise e
 
 def extract_text_from_response(response_data):
     """
-    Extracts the generated text from the API response JSON.
+    Extracts the generated text from the OpenAI o3 API response JSON.
     Handles potential errors if the response format is unexpected.
     """
     try:
-        return response_data['candidates'][0]['content']['parts'][0]['text']
+        # The output is an array, we need to find the message with text content
+        print(">>>>>> Response:")
+        print(json.dumps(response_data, indent=2))
+
+        output_array = response_data['output']
+        for item in output_array:
+            if item['type'] == 'message' and 'content' in item:
+                content_array = item['content']
+                for content_item in content_array:
+                    if content_item['type'] == 'output_text':
+                        return content_item['text']
+        
+        # Fallback: if no text found, return empty string
+        return ""
     except (KeyError, IndexError, TypeError) as e:
         print("Error: Could not extract text from the API response.")
         print(f"Reason: {e}")
@@ -459,16 +422,12 @@ def init_explorations(problem_statement, verbose=True, other_prompts=[]):
     print(json.dumps(output1, indent=4))
 
     print(f">>>>>>> Self improvement start:")
-    p1["contents"].append(
-        {"role": "model",
-        "parts": [{"text": output1}]
-        }
-    )
-    p1["contents"].append(
-        {"role": "user",
-        "parts": [{"text": self_improvement_prompt}]
-        }
-    )
+    # For o3, we need to build a new payload with the conversation context
+    improvement_input = f"{p1['input']}\n\nAssistant: {output1}\n\nUser: {self_improvement_prompt}"
+    p1 = {
+        "model": MODEL_NAME,
+        "input": improvement_input
+    }
 
     response2 = send_api_request(get_api_key(), p1)
     solution = extract_text_from_response(response2)
@@ -490,117 +449,79 @@ def init_explorations(problem_statement, verbose=True, other_prompts=[]):
     
     return p1, solution, verify, good_verify
 
-def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_memory=False):
-    if resume_from_memory and memory_file:
-        # Load memory and resume from previous state
-        memory = load_memory(memory_file)
-        if memory:
-            problem_statement = memory.get("problem_statement", problem_statement)
-            other_prompts = memory.get("other_prompts", other_prompts)
-            current_iteration = memory.get("current_iteration", 0)
-            solution = memory.get("solution", None)
-            verify = memory.get("verify", None)
-            print(f"Resuming from iteration {current_iteration}")
-        else:
-            print("Failed to load memory, starting fresh")
-            current_iteration = 0
-            solution = None
-            verify = None
-    else:
-        # Start fresh
-        current_iteration = 0
-        solution = None
-        verify = None
-    
-    if solution is None:
-        p1, solution, verify, good_verify = init_explorations(problem_statement, True, other_prompts)
-        if(solution is None):
-            print(">>>>>>> Failed in finding a complete solution.")
-            return None
-    else:
-        # We have a solution from memory, need to get good_verify
-        _, good_verify = verify_solution(problem_statement, solution)
+def agent(problem_statement, other_prompts=[]):
+    p1, solution, verify, good_verify = init_explorations(problem_statement, True, other_prompts)
+
+    if(solution is None):
+        print(">>>>>>> Failed in finding a complete solution.")
+        return None
 
     error_count = 0
     correct_count = 1
     success = False
-    for i in range(current_iteration, 30):
+    for i in range(30):
         print(f"Number of iterations: {i}, number of corrects: {correct_count}, number of errors: {error_count}")
 
-        if("yes" not in good_verify.lower()):
-            # clear
-            correct_count = 0
-            error_count += 1
+        try:
+            if("yes" not in good_verify.lower()):
+                # clear
+                correct_count = 0
+                error_count += 1
 
-            #self improvement
-            print(">>>>>>> Verification does not pass, correcting ...")
-            # establish a new prompt that contains the solution and the verification
+                #self improvement
+                print(">>>>>>> Verification does not pass, correcting ...")
+                # establish a new prompt that contains the solution and the verification
 
-            p1 = build_request_payload(
-                system_prompt=step1_prompt,
-                question_prompt=problem_statement,
-                #other_prompts=["You may use analytic geometry to solve the problem."]
-                other_prompts=other_prompts
-            )
+                p1 = build_request_payload(
+                    system_prompt=step1_prompt,
+                    question_prompt=problem_statement,
+                    #other_prompts=["You may use analytic geometry to solve the problem."]
+                    other_prompts=other_prompts
+                )
 
-            p1["contents"].append(
-                {"role": "model",
-                "parts": [{"text": solution}]
+                # For o3, build a new payload with the conversation context
+                correction_input = f"{p1['input']}\n\nAssistant: {solution}\n\nUser: {correction_prompt}\n\n{verify}"
+                p1 = {
+                    "model": MODEL_NAME,
+                    "input": correction_input
                 }
-            )
-            
-            p1["contents"].append(
-                {"role": "user",
-                "parts": [{"text": correction_prompt},
-                          {"text": verify}]
-                }
-            )
 
-            print(">>>>>>> New prompt:")
-            print(json.dumps(p1, indent=4))
-            response2 = send_api_request(get_api_key(), p1)
-            solution = extract_text_from_response(response2)
+                print(">>>>>>> New prompt:")
+                print(json.dumps(p1, indent=4))
+                response2 = send_api_request(get_api_key(), p1)
+                solution = extract_text_from_response(response2)
 
-            print(">>>>>>> Corrected solution:")
-            print(json.dumps(solution, indent=4))
+                print(">>>>>>> Corrected solution:")
+                print(json.dumps(solution, indent=4))
 
 
-            #print(f">>>>>>> Check if solution is complete:"  )
-            #is_complete = check_if_solution_claimed_complete(solution)
-            #if not is_complete:
-            #    print(f">>>>>>> Solution is not complete. Failed.")
-            #    return None
+                #print(f">>>>>>> Check if solution is complete:"  )
+                #is_complete = check_if_solution_claimed_complete(solution)
+                #if not is_complete:
+                #    print(f">>>>>>> Solution is not complete. Failed.")
+                #    return None
 
-        print(f">>>>>>> Verify the solution.")
-        verify, good_verify = verify_solution(problem_statement, solution)
+            print(f">>>>>>> Verify the solution.")
+            verify, good_verify = verify_solution(problem_statement, solution)
 
-        if("yes" in good_verify.lower()):
-            print(">>>>>>> Solution is good, verifying again ...")
-            correct_count += 1
-            error_count = 0
- 
+            if("yes" in good_verify.lower()):
+                print(">>>>>>> Solution is good, verifying again ...")
+                correct_count += 1
+                error_count = 0
+     
 
-        # Save memory every iteration
-        if memory_file:
-            save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify)
-        
-        if(correct_count >= 5):
-            print(">>>>>>> Correct solution found.")
-            print(json.dumps(solution, indent=4))
-            return solution
+            if(correct_count >= 5):
+                print(">>>>>>> Correct solution found.")
+                print(json.dumps(solution, indent=4))
+                return solution
 
-        elif(error_count >= 10):
-            print(">>>>>>> Failed in finding a correct solution.")
-            # Save final state before returning
-            if memory_file:
-                save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify)
-            return None
-
+            elif(error_count >= 10):
+                print(">>>>>>> Failed in finding a correct solution.")
+                return None
+        except Exception as e:
+            print("Unexpected error:", e, "retry...")
     if(not success):
         print(">>>>>>> Failed in finding a correct solution.")
-        # Save final state before returning
-        if memory_file:
-            save_memory(memory_file, problem_statement, other_prompts, 30, 30, solution, verify)
         return None
         
 if __name__ == "__main__":
@@ -611,14 +532,10 @@ if __name__ == "__main__":
     parser.add_argument('--log', '-l', type=str, help='Path to log file (optional)')
     parser.add_argument('--other_prompts', '-o', type=str, help='Other prompts (optional)')
     parser.add_argument("--max_runs", '-m', type=int, default=10, help='Maximum number of runs (default: 10)')
-    parser.add_argument('--memory', '-mem', type=str, help='Path to memory file for saving/loading state (optional)')
-    parser.add_argument('--resume', '-r', action='store_true', help='Resume from memory file if provided')
     
     args = parser.parse_args()
 
     max_runs = args.max_runs
-    memory_file = args.memory
-    resume_from_memory = args.resume
     
     other_prompts = []
     if args.other_prompts:
@@ -626,11 +543,6 @@ if __name__ == "__main__":
 
     print(">>>>>>> Other prompts:")
     print(other_prompts)
-    
-    if memory_file:
-        print(f"Memory file: {memory_file}")
-        if resume_from_memory:
-            print("Resume mode: Will attempt to load from memory file")
 
     # Set up logging if log file is specified
     if args.log:
@@ -643,7 +555,7 @@ if __name__ == "__main__":
     for i in range(max_runs):
         print(f"\n\n>>>>>>>>>>>>>>>>>>>>>>>>>> Run {i} of {max_runs} ...")
         try:
-            sol = agent(problem_statement, other_prompts, memory_file, resume_from_memory)
+            sol = agent(problem_statement, other_prompts)
             if(sol is not None):
                 print(f">>>>>>> Found a correct solution in run {i}.")
                 print(json.dumps(sol, indent=4))
