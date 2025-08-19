@@ -1,5 +1,5 @@
 # IMO 2025 Problem Solver
-A parallel AI agent system for solving International Mathematical Olympiad (IMO) problems using Google's Gemini, OpenAI, and XAI APIs.
+An AI agent system for solving International Mathematical Olympiad (IMO) problems using Google's Gemini, OpenAI, and XAI APIs.
 
 ```
 MIT License
@@ -28,11 +28,21 @@ SOFTWARE.
 ## Overview
 
 This project consists of the following components:
-- `code/agent.py`: A single AI agent that attempts to solve IMO problems
-- `code/agent_oai.py`: A single AI agent that uses OpenAI models (same CLI/usage as `agent.py`)
-- `code/agent_xai.py`: A single AI agent that uses XAI models (same CLI/usage as `agent.py`)
+- `code/agent.py`: A single AI agent that attempts to solve IMO problems with default base model: Google Gemini 2.5 Pro
+- `code/agent_oai.py`: A single AI agent that uses OpenAI GPT-5 model (same CLI/usage as `agent.py`)
+- `code/agent_xai.py`: A single AI agent that uses XAI Grok-4-0709 models (same CLI/usage as `agent.py`)
 - `code/run_parallel.py`: A parallel execution system that runs multiple agents simultaneously
 - `code/res2md.py`: A small utility to parse a result file that contains JSON (e.g., JSONL) and print the last JSON object
+
+These agents have successfully solved IMO 2025 problems 1–5 in internal runs (logs attached), indicative of gold-medal performance.
+
+## Run logs
+
+- `run_logs/`: initial runs using Google Gemini 2.5 Pro as the base model
+- `run_logs_gpt5/`: runs using OpenAI GPT-5 as the base model
+- `run_logs_grok4/`: runs using XAI Grok-4 as the base model
+
+These folders contain example successful run logs demonstrating end-to-end solutions produced by the respective base models.
 
 ## Prerequisites
 
@@ -185,11 +195,18 @@ The system looks for the phrase "Found a correct solution in run" to identify su
 ### Debug Mode
 Add verbose logging by modifying the agent code or check individual log files for detailed output.
 
-## Changelog
+## Changelog 
+
+### 08/18/2025
 
 - Added `code/agent_oai.py` and `code/agent_xai.py` (usage identical to `agent.py`).
 - Logs now record timestamps.
 - Parallel runs no longer exit by default when a solution is found; use `--exit-immediately` to stop at the first complete solution.
+- Adding running logs from grok-4 and gpt-5
+
+### 07/24/2025 
+
+- Initial code release
 
 ## License
 
@@ -207,7 +224,7 @@ Community contributions are located in `code/community_codes/`. These have not b
 
 ## Disclaimer
 
-This tool is for educational and research purposes. Success in solving IMO problems depends on problem difficulty and AI model capabilities. Not all problems may be solvable by the current system.
+This tool is for educational and research purposes. 
 
 ## Citation
 
